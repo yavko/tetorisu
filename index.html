@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tetorisu</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvasu" width="100" height="100"></canvas>
+
+
+    <script type="module">
+
+        // CONFIGURATION TO CHANGE
+        const config = {
+            handling: {
+                arr: 0, // 2f 33ms
+                das: 10, // 10f 167ms
+                dcd: 2, // 2f 33ms
+                sdf: 6, // clamp(6xG,20)
+            },
+            binds: {
+                left: ["ArrowLeft", "a"],
+                right: ["ArrowRight", "d"],
+                soft: ["ArrowDown", "s"],
+                hard: [" "],
+                cw: ["ArrowUp"],
+                ccw: ["z"],
+                turn: ["x", "a"],
+                hold: ["c"],
+                // no reset, just reload lol, F5/ctrl+r
+            },
+            game: {
+                tick_rate: 60, // rate at which the game runs, equivalant at running at 60 fps
+                initial_gravity: 0.1, // cells/tick
+                gravity_constant: 0.0001, // cells/tick² <TODO>
+                lock_delay: 0.5, // seconds <TODO>
+                lock_delay_accel: 0, // for tgm-like mode lol <TODO>
+                lock_actions: 15, // rotations/moves after touch <TODO>
+                rotation_system: "srs+", // srs, asrs (arika srs), srs+
+                spins: "all-mini+", // all-spin(+), t-spin(+),
+                infinite_hold: false, // can hold more than once?
+                combo_multiplier: "tetrio", // guideline/tetrio/none <TODO>
+                b2b_charging: true, // B2B surge
+                b2b_chaining: false, // old tetrio B2B bonus <TODO>
+                pc_attack: 5, // <TODO>
+            },
+        }
+        // CONFIGURATION END
+
+        const pieces = [
+            [
+                [0, 0, 0],
+                [1, 1, 1],
+                [0, 1, 0]
+            ],
+            [
+                [0, 0, 0],
+                [2, 2, 0],
+                [0, 2, 2]
+            ],
+            [
+                [0, 0, 0],
+                [0, 3, 3],
+                [3, 3, 0]
+            ],
+            [
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+                [4, 4, 4, 4],
+                [0, 0, 0, 0]
+            ],
+            [
+                [0, 0, 0],
+                [5, 5, 5],
+                [0, 0, 5]
+            ],
+            [
+                [0, 0, 0],
+                [6, 6, 6],
+                [6, 0, 0]
+            ],
+            [
+                [7, 7],
+                [7, 7]
+            ]
+        ]
+
+
+        const kick_table = (piece, rot_1, rot_2, attempt) => {
+            const mapping = ["0", "R", "2", "L"]
+            const to_str = (rot_1, rot_2) => mapping[rot_1] + "->" + mapping[rot_2];
+
+            const table_other = {
+                "0->R": [ [0, 0], [-1, 0], [-1,+1], [0,-2], [-1,-2]],
+                "R->0": [ [0, 0], [+1, 0], [+1,-1], [0,+2], [+1,+2]],
+                "R->2": [ [0, 0], [+1, 0], [+1,-1], [0,+2], [+1,+2]],
+                "2->R": [ [0, 0], [-1, 0], [-1,+1], [0,-2], [-1,-2]],
+                "2->L": [ [0, 0], [+1, 0], [+1,+1], [0,-2], [+1,-2]],
+                "L->2": [ [0, 0], [-1, 0], [-1,-1], [0,+2], [-1,+2]],
+                "L->0": [ [0, 0], [-1, 0], [-1,-1], [0,+2], [-1,+2]],
+                "0->L": [ [0, 0], [+1, 0], [+1,+1], [0,-2], [+1,-2]],
+                // tetrio 180 kicks!
+                "0->2": [ [0, 0], [0, +1], [+1,+1], [-1,+1], [+1,0], [-1,0] ],
+                "2->0": [ [0, 0], [0, -1], [-1,-1], [+1,-1], [-1,0], [+1,0] ],
+                "R->L": [ [0, 0], [+1, 0], [+1,+2], [+1,+1], [0,+2], [0,+1] ],
+                "L->R": [ [0, 0], [-1, 0], [-1,+2], [-1,+1], [0,+2], [0,+1] ],
+            }
+
+            const table_i_srs = {
+                "0->R": [ [0, 0], [-2, 0], [+1,0], [-2,-1], [+1,+2]],
+                "R->0": [ [0, 0], [+2, 0], [-1,0], [+2,+1], [-1,-2]],
+                "R->2": [ [0, 0], [-1, 0], [+2,0], [-1,+2], [+2,-1]],
+                "2->R": [ [0, 0], [+1, 0], [-2,0], [+1,-2], [-2,+1]],
+                "2->L": [ [0, 0], [+2, 0], [-1,0], [+2,+1], [-1,-2]],
+                "L->2": [ [0, 0], [-2, 0], [+1,0], [-2,-1], [+1,+2]],
+                "L->0": [ [0, 0], [+1, 0], [-2,0], [+1,-2], [-2,+1]],
+                "0->L": [ [0, 0], [-1, 0], [+2,0], [-1,+2], [+2,-1]]
+            }
+            const table_i_asrs = {
+                "0->R": [ [0, 0], [-2, 0], [+1,0], [+1,+2], [-2,-1]],
+                "R->0": [ [0, 0], [+2, 0], [-1,0], [+2,+1], [-1,-2]],
+                "R->2": [ [0, 0], [-1, 0], [+2,0], [-1,+2], [+2,-1]],
+                "2->R": [ [0, 0], [-2, 0], [+1,0], [-2,+1], [+1,-1]],
+                "2->L": [ [0, 0], [+2, 0], [-1,0], [+2,+1], [-1,-1]],
+                "L->2": [ [0, 0], [+1, 0], [-2,0], [+1,+2], [-2,-2]],
+                "L->0": [ [0, 0], [-2, 0], [+1,0], [-2,+1], [+1,-2]],
+                "0->L": [ [0, 0], [+2, 0], [-1,0], [-1,+2], [+2,-1]]
+            }
+            const table_i_srsp = { // TODO: Confirm correctness
+                         // 0        1       2       3         4
+                "0->R": [ [0, 0], [+1, 0], [-2,0], [-2,-1], [+1,+2]],
+                "R->0": [ [0, 0], [-1, 0], [+2,0], [-1,-2], [+2,+1]],
+                "R->2": [ [0, 0], [-1, 0], [+2,0], [-1,+2], [+2,-1]],
+                "2->R": [ [0, 0], [-2, 0], [+1,0], [-2,+1], [+1,-2]],
+                "2->L": [ [0, 0], [+2, 0], [-1,0], [+2,+1], [-1,-2]],
+                "L->2": [ [0, 0], [+1, 0], [-2,0], [+1,-2], [-2,+1]],
+                "L->0": [ [0, 0], [+1, 0], [-2,0], [+1,-2], [-2,-1]],
+                "0->L": [ [0, 0], [-1, 0], [+2,0], [+2,-1], [-1,-2]]
+            }
+
+            let i_table = table_i_srsp;
+            if (config.game.rotation_system == "srs") {
+                i_table = table_i_srs;
+            } else if (config.game.rotation_system == "asrs") {
+                i_table = table_i_asrs;
+            }
+
+            let ret;
+
+            if (piece == 4) {
+                ret = i_table[to_str(rot_1, rot_2)][attempt];
+            } else 
+                ret = table_other[to_str(rot_1, rot_2)][attempt];
+            if (ret === undefined) {
+                return null
+            }
+
+
+            return ret;
+                
+        }
+        //console.log(kick_table(2, 0, 1, 3))
+
+        const srs = (delta) => {
+            const rot_1 = state.rotation;
+            const rot_2 = (state.rotation + delta)%4;
+
+            if (
+                (delta == 2 && state.current_piece == 4) ||
+                state.current_piece == 7
+            ) {
+                if (!check_collision_change(0, 0, delta)) {
+                    state.rotation = rot_2
+                }
+            } else {
+                for (const attempt of range(0,5)) {
+                    const kick = kick_table(state.current_piece, rot_1, rot_2, attempt)
+                    if (kick) {
+                        const [kick_x, kick_y] = kick;
+                        if (check_collision_change(kick_x, kick_y, delta)) {
+                            continue;
+                        }
+                        state.rotation = rot_2;
+                        state.location[0] += kick_x;
+                        state.location[1] += kick_y;
+                        break;
+                    }
+                }
+            }
+        }
+
+        const recolor = (color) => (matrix) => {
+            matrix.map(row => row.map(col => col == 0 ? 0 : color ))
+        }
+        
+        const transpose = matrix => matrix[0].map((col, i) => matrix.map(row => row[i]));
+
+        const r90p = mat => transpose(mat).map(row => [...row].reverse());
+        const r90 = mat => reverse(transpose(mat))
+
+
+        const r270p = mat => transpose(mat.map(row => [...row].reverse()))
+        const r270 = mat => transpose(reverse(mat));
+
+        const r180 = matrix => [...matrix].reverse().map(row => [...row].reverse());
+
+        const reverse = mat => [...mat].reverse()
+
+        const rotations = new Map()
+        pieces.forEach(
+            (piece, i) => rotations.set(i+1, [piece, r90(piece), r180(piece), r270(piece)])
+        )
+        // console.log(rotations)
+
+        function* range(a, b = null, step = 1) {
+            for (let i = (b === null ? 0 : a); i <= (b === null ? a : b); i += step) {
+                yield i;
+            }
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i >= 1; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
+
+        const objectMap = (obj, fn) =>
+            Object.fromEntries(
+                Object.entries(obj).map(
+                    ([k, v], i) => [k, fn(v, k, i)]
+                )
+            )
+
+
+        /** @type {HTMLCanvasElement} */
+        const canvas = document.getElementById("canvasu");
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+
+        
+
+        const state = {
+            points: 0,
+            b2b: 0,
+            combo: 0,
+            attack: 0,
+            pieces: 0,
+            grid: Array.from({ length: 30 }, () => new Uint8Array(10)),
+            key: null,
+            current_frame: 0,
+            location: [0,0],
+            gravity: config.game.initial_gravity,
+            lock_delay: config.game.lock_delay,
+            piece_buffer: [],
+            hold: null,
+            held: false,
+            current_piece: null,
+            rotation: 0
+        }
+
+        const spawn_location = (piece) => {
+            if (piece == 7) {
+                return [4,21]
+            }
+            return [3,21]
+        }
+
+        const shuffle_buffer = [...range(1, pieces.length)];
+        let piece_index = 0;
+        shuffleArray(shuffle_buffer);
+        state.piece_buffer.push(...shuffle_buffer);
+        state.current_piece = state.piece_buffer.shift();
+        state.location = spawn_location(state.current_piece)
+
+        const hold = () => {
+            if (config.game.infinite_hold || !state.held) {
+                state.held = true;
+                if (state.hold === null) {
+                    state.hold = state.current_piece;
+                    state.current_piece = state.piece_buffer.shift();
+                } else {
+                    // swap w/o buffer w/ xor
+                    state.hold ^= state.current_piece;
+                    state.current_piece ^= state.hold;
+                    state.hold ^= state.current_piece;
+                }
+                state.rotation = 0;
+                state.location = spawn_location(state.current_piece);
+            }
+        }
+
+        const calculate_shadow = (piece, rotation, location, grid) => {
+            let new_y = location[1];
+            while (!check_collision_for(piece, rotation, grid, [location[0], new_y] )) {
+                new_y--;
+            }
+            return [location[0], new_y+1];
+        }
+
+        const check_clears = () => {
+            const clears = []
+            for (const [ix, line] of state.grid.entries()) {
+                let cleared = true;
+                for (const cell of line) {
+                    if (cell == 0) {
+                        cleared = false;
+                        break;
+                    }
+                }
+                if (cleared)
+                    clears.push(ix)
+            }
+            // console.log(clears)
+            // console.log(state.grid)
+            for (const clear_id of clears.reverse()) {
+                for (let i = clear_id; i < state.grid.length-1; i++) {
+                    state.grid[i] = state.grid[i+1];
+                }
+                state.grid[state.grid.length-1] = new Uint8Array(10)
+            }
+            // console.log(state.grid)
+            return clears.length;
+        }
+        const mini_spin = 2
+        const full_spin = 1
+        const none_spin = 0
+        const check_spin = (piece, last_srs_attempt) => {
+            if (piece == 1) {
+                // T check
+                const around = (x,y) => {
+                    if (state.location[1]+y>=0 && state.location[0]+x >= 0 && state.location[0]+x < 10)
+                    return state.grid[state.location[1]+y][state.location[0]+x] == 0 ? 0 : 1;
+                    else return 1;
+                }
+                const corners = around(0,0)+around(2,0)+around(0,2)+around(2,2)
+                if (corners >= 3) {
+                    const spot = (rot) => [-Math.abs(rot-1)+2,-Math.abs(rot-2)+2]
+                    
+                    return full_spin
+                }
+                if (corners == 2) {
+                    return mini_spin
+                }
+                
+            }
+         
+            const stuck =
+                check_collision_change(+1,0,0) &&
+                check_collision_change(-1,0,0) &&
+                check_collision_change(0,+1,0) &&
+                check_collision_change(0,-1,0);
+            return stuck ? mini_spin : none_spin;
+            
+            
+        }
+        let last_spin = full_spin;
+        let last_count = 0;
+        let last_piece = 1
+        let last_b2b = 0
+        let display_ttl = -1
+
+        const update_display = (s, c, p, b) => {
+            last_spin = s;
+            last_count = c;
+            last_piece = p;
+            last_b2b = b;
+            display_ttl = 5;
+        }
+        
+        const get_next = () => {
+            // CHECK SPIN
+            const was_spin = check_spin(state.current_piece,0);
+            place(state.current_piece, state.rotation, state.grid, state.location);
+            const piece = state.current_piece;
+            state.pieces++;
+            state.current_piece = state.piece_buffer[0]
+            state.location = spawn_location(state.current_piece)
+            state.rotation = 0
+            // TOP OUT CHECK
+
+            const count = check_clears();
+
+            if (count == 0) {
+                // combo break
+                state.combo=0;
+                // POINTS (combo break)
+            } else {
+                state.combo++;
+                // POINTS (combo multiplier)
+            }
+
+            if ((count > 0 && was_spin == 2) || count == 4) {
+                let attack = 4;
+                if (state.b2b>0)
+                    attack += 1;
+                state.attack += attack; 
+            } else if (was_spin == mini_spin) {
+                state.attack += 1;
+            } else if (count == 3) {
+                state.attack += 2;
+            } else if (count == 2) {
+                state.attack += 1;
+            }
+
+            if ((count > 0 && was_spin > 0) || count == 4) { // or all clear
+                state.b2b++;
+                // POINTS (simple b2b bonus)
+            } else if (count != 0) {
+                // b2b break
+                if (state.b2b>=4) {
+                    state.attack += state.b2b;
+                }
+                state.b2b = 0;
+                
+                // POINTS (surge break)
+            }
+            update_display(was_spin, count, piece, state.b2b)
+
+            state.held = false;
+            const next = state.piece_buffer.shift();
+            if (state.piece_buffer.length === 5) {
+                add_to_buffer()
+            }
+            //return next
+        }
+
+        const add_to_buffer = () => {
+            shuffleArray(shuffle_buffer)
+            state.piece_buffer.push(...shuffle_buffer)
+        }
+
+        const place = (piece, rotation, grid, location) =>  {
+            const matrix = rotations.get(piece)[rotation];
+            matrix.forEach((row, y) => row.forEach((c, x) => {
+                if (c != 0)
+                grid[y+location[1]][x+location[0]] = matrix[y][x]
+            }))
+        }
+
+        const check_collision_for = (piece, rotation, grid, location) => {
+            const matrix = rotations.get(piece)[rotation];
+            let val = false
+            matrix.forEach((row, y) => row.forEach((c, x) => {
+                if (c != 0) {
+                    
+                    if (x + location[0] > 9 || x + location[0] < 0) {
+                        // console.log("too right or too left")
+                        val = true;
+                        return
+                    }
+                    if (y+location[1] < 0) {
+                        // console.log(`too down: ${y+location[1]}`)
+                        val = true;
+                        return
+                    }
+                    const spot_c = grid[y+location[1]][x+location[0]];
+                    if (spot_c == undefined || spot_c != 0) {
+                        // console.log(`overlap: current: ${c}, on: ${spot_c}`)
+                        val = true;
+                    }
+                }
+            }))
+            return val;
+        }
+        const check_collision_change = (x, y, r) =>
+            check_collision_for(
+                state.current_piece,
+                (state.rotation + r) % 4,
+                state.grid,
+                [state.location[0]+x,state.location[1]+y]
+            );
+
+        class PressMap extends Map {
+            constructor(state) {
+                super()
+                this.state = state;
+            }
+            was_pressed(key) {
+                let data = this.get_key(key)
+                const key_state = data.was_pressed
+                data.was_pressed = false;
+                return key_state;
+            }
+            get_key(key) {
+                let data;
+                if ((data = super.get(key))) {
+                    return data
+                } else {
+                    data = {
+                        is_currently_pressed: false,
+                        last_press_frame: 0,
+                        was_pressed: false,
+                    }
+                    super.set(key, data)
+                    return data;
+                }
+            }
+            is_pressed(key) {
+                return this.get_key(key).is_currently_pressed;
+            }
+            unpress(key) {
+                const data = this.get_key(key)
+                data.is_currently_pressed = false;
+                data.was_pressed = false;
+            }
+            key_frame(key) {
+                return this.get_key(key).last_press_frame
+            }
+            set_pressed(key) {
+                let data = this.get_key(key)
+                //if (!data.was_pressed) {
+                //    data.was_pressed = true;
+                //}
+                if (!data.is_currently_pressed) {
+                    data.is_currently_pressed = true;
+                    data.was_pressed = true;
+                    data.last_press_frame = this.state.current_frame;
+                }
+            }
+        }
+        state.key = new PressMap(state)
+
+        window.addEventListener("keydown", e => state.key.set_pressed(e.key));
+        window.addEventListener("keyup", e => state.key.unpress(e.key));
+
+        const piece_info = num => [
+            ["empty", "black"], // 0
+            ["T", "rgb(136,44,237)"], // 1
+            ["S", "rgb(138,234,40)"], // 2
+            ["Z", "rgb(207,54,22)"], // 3
+            ["I", "rgb(0, 240, 240)"], // 4
+            ["L", "rgb(221, 164, 34)"], // 5
+            ["J", "rgb(0, 0, 240)"], // 6
+            ["O", "rgb(241,239,47)"], // 7
+            ["Garbage", "#555555"], // 8
+            ["Shadow", "#111111"], // 9
+            ["Dark Garbage", "#333333"] // 10
+        ][num];
+
+        const color = num => piece_info(num)[1]
+    
+        
+
+        let last_move = 0;
+        let last_das = 0;
+
+
+        const is_pressed = (bind) => {
+            let press = false;
+            for (const meow of config.binds[bind]) {
+                press ||= state.key.is_pressed(meow)
+            }
+            return press
+        }
+
+        const was_pressed = (bind) => {
+            let press = false;
+            for (const meow of config.binds[bind]) {
+                press ||= state.key.was_pressed(meow)
+            }
+            return press
+        }
+
+        const is_pressed_arr = (bind) => {
+            const obj = {}
+            config.binds[bind].forEach((key) => {
+                obj[key] = state.key.is_pressed(key);
+            })
+            return obj
+        }
+
+
+        const das_movement_check = (dir) => {
+            const other = dir === "left" ? "right" : "left"
+
+            const move = (dir) => {
+                const delta = dir === "left" ? -1 : 1;
+                if (!check_collision_change(delta, 0, 0))
+                    state.location[0] += delta
+            }
+            if (was_pressed(dir)) {
+                last_das = 0;
+            }
+
+            Object.entries(is_pressed_arr(dir)).forEach(([key, pressed]) => {
+                if (pressed) {
+                    const press_frame = state.key.key_frame(key)
+
+                    //console.log(`${key}: ${Math.abs(press_frame - state.current_frame)}`)
+
+                    if (
+                        Math.abs(last_das - state.current_frame) > config.handling.das &&
+                        Math.abs(press_frame - state.current_frame) < config.handling.das
+                    ) {
+                        // move
+                        move(dir)
+                        //console.log(`pre-DAS move ${dir} (${state.location})`)
+                        last_move = state.current_frame;
+                        last_das = state.current_frame;
+
+                        // ARR check
+                    } else if (
+                        Math.abs(press_frame - state.current_frame) > config.handling.das &&
+                        Math.abs(last_move - state.current_frame) > config.handling.arr
+                    ) {
+                        // move
+                        move(dir)
+                        //console.log(`ARR move ${dir} (${state.location})`)
+                        last_move = state.current_frame;
+                    }
+                    return;
+                }
+            })
+        }
+
+
+        let previous_stamp = 0;
+        let sd_percent = 0;
+        let inputs = 0;
+
+
+
+        const render = (timestamp) => {
+            const frame_dt = timestamp - previous_stamp;
+            const dt = frame_dt / 1000 // seconds/frame
+
+            // clear    
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = "grey";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+
+            
+            // draw board
+            const board_height = canvas.height * (17 / 20);
+            const board_width = (1 / 2) * board_height;
+            const board_offset = board_width*(2/20)
+
+            const board_anchor = [(canvas.width - board_width)/2, (canvas.height - board_height) / 2 + board_offset]
+            
+            const tet_width = board_width / 10;
+
+            const text_height = "30";
+
+            ctx.font = text_height + "px sans-serif";
+            ctx.fillStyle = "white";
+
+            const draw_preview = (piece, offset_x, offset_y, recolor = null) => {
+                const matrix = rotations.get(piece)[0];
+                const centering_table = {
+                    1: [0,0],
+                    2: [0,0],
+                    3: [0,0],
+                    4: [-10,0],
+                    5: [0,0],
+                    6: [0,0],
+                    7: [7,-10],
+                }
+                const drawb = (x, y, c) => {
+                    const prev = ctx.fillStyle;
+                    const twidth = tet_width/1.5;
+                    ctx.fillStyle = color(c)
+                    if (recolor != null) ctx.fillStyle = color(recolor)
+                    ctx.fillRect(
+                        offset_x + twidth * x + centering_table[c][0], // x 
+                        offset_y - twidth * y - twidth + centering_table[c][1], // y
+                        twidth, twidth // w, h
+                    );
+                    ctx.fillStyle = prev;
+                }
+                
+                for (const [y,row] of matrix.entries()) {
+                    for (const [x,c] of row.entries()) {
+                        if (c != 0) {
+                            drawb(x,y,matrix[y][x])
+                        }
+                    }
+                }
+            }
+
+            ctx.fillText("Hold", board_anchor[0]-150, board_anchor[1]+20)
+            if (state.hold != null) {
+                draw_preview(state.hold, board_anchor[0]-150, board_anchor[1]+100, state.held ? 9 : null)
+            }
+
+
+            const [next_anchor_x, next_anchor_y] = [board_anchor[0]+100+board_width, board_anchor[1]+20]
+
+            ctx.fillText("Next", next_anchor_x, next_anchor_y)
+            let offset = 100
+            for (const ind of range(0, 4)) {
+                if (!state.piece_buffer[ind]) add_to_buffer();
+                draw_preview(state.piece_buffer[ind], next_anchor_x, next_anchor_y + offset);
+
+                offset+= 100;
+            }
+
+            
+            
+            
+            display_ttl -= dt
+
+            if (display_ttl >= 0) {
+                let offsett = 0
+                if (last_spin) {
+                    ctx.fillText(
+                        piece_info(1)[0] + "-spin " + ( last_spin == mini_spin ? "mini" : ""),
+                        board_anchor[0]-120, board_anchor[1]+225
+                    )
+                    offsett += 50;
+                }
+                let clear = ""
+                if (last_count == 1) {
+                    clear = "Single"
+                } else if (last_count == 2) {
+                    clear = "Double"
+                } else if (last_count == 3) {
+                    clear = "Triple"
+                } else if (last_count == 4 && last_spin == 0) {
+                    clear = "Tetris"
+                } else if (last_count == 4) {
+                    clear = "Quad"
+                }
+                ctx.fillText(clear, board_anchor[0]-120, board_anchor[1]+225 + offsett)
+            }
+
+            const [info_anchor_x,info_anchor_y]  = [board_anchor[0]-120, board_anchor[1]+350]
+
+            const infoText = (text, offset) => {
+                const measurements = ctx.measureText(text);
+                ctx.fillText(text, info_anchor_x - measurements.width/2, info_anchor_y + offset - text_height/2)
+            }
+
+            infoText(`Score: ${state.points}`, 0)
+            infoText(`Combo: ${state.combo}`, 50)
+            infoText(`B2B: ${state.b2b}`,100)
+            infoText(`APM: ${(state.attack/((timestamp/1000)/60)).toFixed(2)}`, 150)
+            infoText(`PPS: ${(state.pieces/(timestamp/1000)).toFixed(2)}`, 200)
+
+
+
+
+            
+            ctx.fillRect(board_anchor[0], board_anchor[1], board_width, board_height);
+
+
+            let spawn_origin = [board_anchor[0], board_anchor[1]+board_height]
+
+            // input
+            
+            if (was_pressed("cw")) {
+                // rotate cw
+                srs(1);
+            }
+            if (was_pressed("ccw")) {
+                // rotate ccw
+                srs(3);
+            }
+            if (was_pressed("turn")) {
+                // rotate 180
+                if (!check_collision_change(0,0,2)) {
+                    state.rotation = (state.rotation + 2) % 4
+                    console.log("turn")
+                } else {
+                    // srs
+                }
+            }
+            if (was_pressed("hold")) {
+                // hold
+                hold()
+                console.log("hold")
+            }
+
+            
+            
+
+            // gravity: cells/tick
+            // tick: 1/60 second
+            const adjusted_gravity = state.gravity * config.game.tick_rate * dt
+            if (is_pressed("soft")) {
+                // soft drop
+                sd_percent += config.handling.sdf * adjusted_gravity
+            } else {
+                sd_percent += adjusted_gravity
+            }
+            
+            if (sd_percent >= 1) {
+                const delta = Math.floor(sd_percent);
+                if (!check_collision_change(0,-delta,0)) {
+                    state.location[1] -= delta;
+                    sd_percent %= 1
+                } else {
+                    sd_percent = 0;
+                }
+            }
+            
+
+            das_movement_check("left")
+            das_movement_check("right")
+
+            const shadow = calculate_shadow(state.current_piece, state.rotation, state.location, state.grid)
+            if (was_pressed("hard")) {
+                // hard drop
+                state.location[0] = shadow[0];
+                state.location[1] = shadow[1];
+                
+                get_next()
+                
+            }
+
+            const draw = (x, y, c) => {
+                ctx.fillStyle = color(c) // color(Math.floor(Math.random() * 6))
+                const padding = c == 0 ? 1 : 0
+                if (y <= 19 || c != 0)
+                    ctx.fillRect(
+                        spawn_origin[0] + tet_width * x + padding, // x 
+                        spawn_origin[1] - tet_width * y - tet_width + padding, // y
+                        tet_width-padding*2, tet_width - padding*2 // w, h
+                    );
+            }
+
+            state.grid.forEach((l, y) => {
+                l.forEach((c, x) => {
+                    draw(x,y,c);
+                })
+            });
+            
+            const matrix = rotations.get(state.current_piece)[state.rotation];
+            let [shadow_x, shadow_y] = shadow
+
+
+            for (const [y,row] of matrix.entries()) {
+                for (const [x,c] of row.entries()) {
+                    if (c != 0) {
+                        if (shadow_x != state.location[0] || shadow_y != state.location[1])
+                            draw(shadow_x + x, shadow_y + y, 9)
+                        draw(state.location[0]+x,state.location[1]+y,matrix[y][x])
+                    }
+                }
+            }
+
+
+
+            state.current_frame++;
+            previous_stamp = timestamp;
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+
+    </script>
+
+</body>
+
+</html>
